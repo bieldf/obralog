@@ -7,72 +7,99 @@ const statusBadge = { novo: 'badge-blue', em_andamento: 'badge-amber', concluido
 const statusLabel = { novo: 'Novo', em_andamento: 'Em andamento', concluido: 'Concluído', em_revisao: 'Em revisão' }
 
 async function gerarPDF(data, relatorios, obraNome) {
-  // Busca fotos de cada relatório e converte para base64
-  const relatoriosComFotos = await Promise.all(
-    relatorios.map(async r => {
-      const { data: fotos } = await supabase
-        .from('relatorio_fotos')
-        .select('url')
-        .eq('relatorio_id', r.id)
+  const { data: todasFotos } = await supabase
+    .from('relatorio_fotos')
+    .select('relatorio_id, url')
+    .in('relatorio_id', relatorios.map(r => r.id))
 
-      const fotosBase64 = await Promise.all(
-        (fotos || []).map(async f => {
-          try {
-            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(f.url)}`
-            const resp = await fetch(proxyUrl)
-            const blob = await resp.blob()
-            return await new Promise(resolve => {
-              const reader = new FileReader()
-              reader.onload = () => resolve(reader.result)
-              reader.readAsDataURL(blob)
-            })
-          } catch {
-            return f.url
-          }
-        })
-      )
-      return { ...r, fotosBase64 }
-    })
-  )
+  const fotosPorRelatorio = (todasFotos || []).reduce((acc, f) => {
+    if (!acc[f.relatorio_id]) acc[f.relatorio_id] = []
+    acc[f.relatorio_id].push(f.url)
+    return acc
+  }, {})
 
-  const conteudo = relatoriosComFotos.map((r, idx) => `
-    <div style="margin-bottom:40px;padding-bottom:32px;${idx < relatoriosComFotos.length - 1 ? 'border-bottom:2px solid #ddd;' : ''}page-break-inside:avoid">
-      <h2 style="color:#D85A30;margin:0 0 6px;font-size:18px">${r.titulo}</h2>
-      <p style="color:#888;font-size:13px;margin:0 0 16px;border-bottom:1px solid #f0f0f0;padding-bottom:10px">
-        ${r.setor} · ${r.profiles?.nome || 'Sem autor'} · Status: ${statusLabel[r.status] || r.status}
-      </p>
+  const dataFormatada = new Date(data + 'T12:00:00').toLocaleDateString('pt-BR', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+  })
 
-      <div style="margin-bottom:16px">
-        <p style="font-weight:bold;margin:0 0 6px;font-size:14px">Atividades realizadas:</p>
-        <p style="margin:0;line-height:1.7;font-size:14px;white-space:pre-wrap">${r.descricao}</p>
+  const conteudo = relatorios.map((r, idx) => `
+    <div class="relatorio">
+      <h2>${r.titulo}</h2>
+      <p class="meta">${r.setor} · ${r.profiles?.nome || 'Sem autor'} · ${statusLabel[r.status] || r.status}</p>
+
+      <div class="secao">
+        <strong>Atividades realizadas:</strong>
+        <p>${r.descricao}</p>
       </div>
 
       ${r.materiais ? `
-        <div style="margin-bottom:16px;padding:12px;background:#f9f9f9;border-radius:6px">
-          <p style="font-weight:bold;margin:0 0 4px;font-size:14px">Materiais utilizados:</p>
-          <p style="margin:0;font-size:14px">${r.materiais}</p>
+        <div class="secao cinza">
+          <strong>Materiais utilizados:</strong>
+          <p>${r.materiais}</p>
         </div>
       ` : ''}
 
-      ${r.fotosBase64.length > 0 ? `
-        <div style="margin-bottom:16px">
-          <p style="font-weight:bold;margin:0 0 10px;font-size:14px">Fotos (${r.fotosBase64.length}):</p>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-            ${r.fotosBase64.map(src => `
-              <img src="${src}" style="width:100%;height:220px;object-fit:cover;border-radius:6px;border:1px solid #eee;display:block" />
+      ${(fotosPorRelatorio[r.id] || []).length > 0 ? `
+        <div class="secao">
+          <strong>Fotos (${fotosPorRelatorio[r.id].length}):</strong>
+          <div class="fotos">
+            ${fotosPorRelatorio[r.id].map(url => `
+              <img src="${url}" crossorigin="anonymous" />
             `).join('')}
           </div>
         </div>
       ` : ''}
 
       ${r.observacoes ? `
-        <div style="padding:12px;background:#FCEBEB;border-radius:6px;border-left:4px solid #A32D2D">
-          <p style="font-weight:bold;color:#A32D2D;margin:0 0 4px;font-size:14px">⚠ Observações / Problemas:</p>
-          <p style="margin:0;font-size:14px">${r.observacoes}</p>
+        <div class="secao alerta">
+          <strong>⚠ Observações:</strong>
+          <p>${r.observacoes}</p>
         </div>
       ` : ''}
     </div>
   `).join('')
+
+  const janela = window.open('', '_blank')
+  janela.document.write(`<!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Relatórios ${obraNome} ${data}</title>
+      <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: Arial, sans-serif; padding: 40px; color: #222; max-width: 800px; margin: 0 auto; }
+        .topo { border-bottom: 3px solid #D85A30; padding-bottom: 16px; margin-bottom: 32px; }
+        .topo h1 { font-size: 20px; margin-bottom: 6px; }
+        .topo p { color: #666; font-size: 13px; margin-top: 3px; }
+        .relatorio { margin-bottom: 36px; padding-bottom: 28px; border-bottom: 1.5px solid #ddd; page-break-inside: avoid; }
+        .relatorio:last-child { border-bottom: none; }
+        .relatorio h2 { color: #D85A30; font-size: 16px; margin-bottom: 4px; }
+        .meta { color: #888; font-size: 12px; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid #f0f0f0; }
+        .secao { margin-bottom: 12px; }
+        .secao strong { font-size: 13px; display: block; margin-bottom: 4px; }
+        .secao p { font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
+        .cinza { background: #f9f9f9; padding: 10px; border-radius: 6px; }
+        .alerta { background: #FCEBEB; padding: 10px; border-radius: 6px; border-left: 4px solid #A32D2D; }
+        .alerta strong { color: #A32D2D; }
+        .fotos { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
+        .fotos img { width: 100%; height: 200px; object-fit: cover; border-radius: 6px; border: 1px solid #eee; }
+        .btn-print { position: fixed; top: 16px; right: 16px; background: #D85A30; color: #fff; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: bold; }
+        @media print { .btn-print { display: none; } }
+      </style>
+    </head>
+    <body>
+      <button class="btn-print" onclick="window.print()">🖨 Imprimir / Salvar PDF</button>
+      <div class="topo">
+        <h1>Relatório de Serviços Realizados</h1>
+        <p>🏗 Obra: <strong>${obraNome}</strong></p>
+        <p>📅 <strong style="text-transform:capitalize">${dataFormatada}</strong></p>
+        <p>📋 ${relatorios.length} relatório${relatorios.length !== 1 ? 's' : ''}</p>
+      </div>
+      ${conteudo}
+    </body>
+    </html>`)
+  janela.document.close()
+}
 
   const dataFormatada = new Date(data + 'T12:00:00').toLocaleDateString('pt-BR', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
