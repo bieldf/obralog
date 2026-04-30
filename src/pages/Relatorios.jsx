@@ -2,37 +2,68 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { supabase, uploadFoto } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
+import { jsPDF } from 'jspdf'
 
 const statusBadge = { novo: 'badge-blue', em_andamento: 'badge-amber', concluido: 'badge-teal', em_revisao: 'badge-orange' }
 const statusLabel = { novo: 'Novo', em_andamento: 'Em andamento', concluido: 'Concluído', em_revisao: 'Em revisão' }
 
 async function gerarPDF(data, relatorios, obraNome) {
-  const btn = document.querySelector('[data-gerando]')
-  if (btn) btn.textContent = 'Gerando...'
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+  const W = 210
+  const margin = 15
+  const maxW = W - margin * 2
+  let y = 20
 
-  // Busca todas as fotos dos relatórios do dia
+  const addText = (text, x, size, bold, color) => {
+    doc.setFontSize(size)
+    doc.setFont('helvetica', bold ? 'bold' : 'normal')
+    doc.setTextColor(...(color || [34, 34, 34]))
+    doc.text(String(text || ''), x, y)
+  }
+
+  const checkPage = (needed) => {
+    if (y + needed > 280) { doc.addPage(); y = 20 }
+  }
+
+  const dataFormatada = new Date(data + 'T12:00:00').toLocaleDateString('pt-BR', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+  })
+
+  // Cabeçalho
+  doc.setFillColor(216, 90, 48)
+  doc.rect(0, 0, W, 18, 'F')
+  doc.setFontSize(14)
+  doc.setFont('helvetica', 'bold')
+  doc.setTextColor(255, 255, 255)
+  doc.text('Relatório de Serviços Realizados', margin, 12)
+  y = 28
+
+  addText(`Obra: ${obraNome}`, margin, 11, false, [80, 80, 80])
+  y += 6
+  addText(`Data: ${dataFormatada}`, margin, 11, false, [80, 80, 80])
+  y += 6
+  addText(`Total de relatórios: ${relatorios.length}`, margin, 11, false, [80, 80, 80])
+  y += 10
+
+  doc.setDrawColor(216, 90, 48)
+  doc.setLineWidth(0.8)
+  doc.line(margin, y, W - margin, y)
+  y += 10
+
+  // Busca fotos
   const { data: todasFotos } = await supabase
     .from('relatorio_fotos')
     .select('relatorio_id, url')
     .in('relatorio_id', relatorios.map(r => r.id))
 
-  // Converte cada foto para base64 usando o Supabase Storage diretamente
   const fotosPorRelatorio = {}
   for (const foto of (todasFotos || [])) {
-    if (!fotosPorRelatorio[foto.relatorio_id]) {
-      fotosPorRelatorio[foto.relatorio_id] = []
-    }
+    if (!fotosPorRelatorio[foto.relatorio_id]) fotosPorRelatorio[foto.relatorio_id] = []
     try {
-      // Extrai o path do arquivo da URL pública
       const urlObj = new URL(foto.url)
       const path = urlObj.pathname.split('/fotos-relatorios/')[1]
-      
-      // Baixa o arquivo diretamente do Supabase Storage
-      const { data: fileData, error } = await supabase.storage
-        .from('fotos-relatorios')
-        .download(path)
-      
-      if (!error && fileData) {
+      const { data: fileData } = await supabase.storage.from('fotos-relatorios').download(path)
+      if (fileData) {
         const base64 = await new Promise(resolve => {
           const reader = new FileReader()
           reader.onload = () => resolve(reader.result)
@@ -40,242 +71,101 @@ async function gerarPDF(data, relatorios, obraNome) {
         })
         fotosPorRelatorio[foto.relatorio_id].push(base64)
       }
-    } catch {
-      fotosPorRelatorio[foto.relatorio_id].push(foto.url)
+    } catch { }
+  }
+
+  // Relatórios
+  for (let i = 0; i < relatorios.length; i++) {
+    const r = relatorios[i]
+    const fotos = fotosPorRelatorio[r.id] || []
+
+    checkPage(20)
+
+    doc.setFillColor(250, 236, 231)
+    doc.roundedRect(margin, y - 5, maxW, 12, 2, 2, 'F')
+    addText(r.titulo, margin + 3, 13, true, [216, 90, 48])
+    y += 10
+
+    addText(`${r.setor} · ${r.profiles?.nome || 'Sem autor'} · ${statusLabel[r.status] || r.status}`, margin, 10, false, [130, 130, 130])
+    y += 8
+
+    checkPage(10)
+    addText('Atividades realizadas:', margin, 11, true, [34, 34, 34])
+    y += 6
+    doc.setFontSize(11)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(60, 60, 60)
+    const linhasDesc = doc.splitTextToSize(r.descricao || '', maxW)
+    for (const linha of linhasDesc) {
+      checkPage(6)
+      doc.text(linha, margin, y)
+      y += 5.5
+    }
+    y += 4
+
+    if (r.materiais) {
+      checkPage(10)
+      addText('Materiais utilizados:', margin, 11, true, [34, 34, 34])
+      y += 6
+      doc.setFontSize(11)
+      doc.setFont('helvetica', 'normal')
+      doc.setTextColor(60, 60, 60)
+      const linhasMat = doc.splitTextToSize(r.materiais, maxW)
+      for (const linha of linhasMat) {
+        checkPage(6)
+        doc.text(linha, margin, y)
+        y += 5.5
+      }
+      y += 4
+    }
+
+    if (fotos.length > 0) {
+      checkPage(10)
+      addText(`Fotos (${fotos.length}):`, margin, 11, true, [34, 34, 34])
+      y += 6
+
+      const fotoW = (maxW - 5) / 2
+      const fotoH = 55
+
+      for (let f = 0; f < fotos.length; f += 2) {
+        checkPage(fotoH + 5)
+        try { doc.addImage(fotos[f], 'JPEG', margin, y, fotoW, fotoH) } catch { }
+        if (fotos[f + 1]) {
+          try { doc.addImage(fotos[f + 1], 'JPEG', margin + fotoW + 5, y, fotoW, fotoH) } catch { }
+        }
+        y += fotoH + 5
+      }
+      y += 4
+    }
+
+    if (r.observacoes) {
+      checkPage(14)
+      doc.setFillColor(252, 235, 235)
+      const linhasObs = doc.splitTextToSize(r.observacoes, maxW - 6)
+      doc.roundedRect(margin, y - 4, maxW, linhasObs.length * 5.5 + 12, 2, 2, 'F')
+      addText('Observações:', margin + 3, 11, true, [163, 45, 45])
+      y += 6
+      doc.setFontSize(11)
+      doc.setFont('helvetica', 'normal')
+      doc.setTextColor(163, 45, 45)
+      for (const linha of linhasObs) {
+        checkPage(6)
+        doc.text(linha, margin + 3, y)
+        y += 5.5
+      }
+      y += 6
+    }
+
+    if (i < relatorios.length - 1) {
+      checkPage(10)
+      doc.setDrawColor(220, 220, 220)
+      doc.setLineWidth(0.3)
+      doc.line(margin, y, W - margin, y)
+      y += 10
     }
   }
 
-  const dataFormatada = new Date(data + 'T12:00:00').toLocaleDateString('pt-BR', {
-    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
-  })
-
-  const conteudo = relatorios.map(r => {
-    const fotos = fotosPorRelatorio[r.id] || []
-    return `
-      <div class="relatorio">
-        <h2>${r.titulo}</h2>
-        <p class="meta">${r.setor} · ${r.profiles?.nome || 'Sem autor'} · ${statusLabel[r.status] || r.status}</p>
-
-        <div class="secao">
-          <strong>Atividades realizadas:</strong>
-          <p>${r.descricao}</p>
-        </div>
-
-        ${r.materiais ? `
-          <div class="secao cinza">
-            <strong>Materiais utilizados:</strong>
-            <p>${r.materiais}</p>
-          </div>
-        ` : ''}
-
-        ${fotos.length > 0 ? `
-          <div class="secao">
-            <strong>Fotos (${fotos.length}):</strong>
-            <div class="fotos">
-              ${fotos.map(src => `<img src="${src}" />`).join('')}
-            </div>
-          </div>
-        ` : ''}
-
-        ${r.observacoes ? `
-          <div class="secao alerta">
-            <strong>⚠ Observações:</strong>
-            <p>${r.observacoes}</p>
-          </div>
-        ` : ''}
-      </div>
-    `
-  }).join('')
-
-  const janela = window.open('', '_blank')
-  janela.document.write(`<!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="utf-8">
-      <title>Relatórios ${obraNome} ${data}</title>
-      <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: Arial, sans-serif; padding: 40px; color: #222; max-width: 800px; margin: 0 auto; }
-        .topo { border-bottom: 3px solid #D85A30; padding-bottom: 16px; margin-bottom: 32px; }
-        .topo h1 { font-size: 20px; margin-bottom: 6px; }
-        .topo p { color: #666; font-size: 13px; margin-top: 3px; }
-        .relatorio { margin-bottom: 36px; padding-bottom: 28px; border-bottom: 1.5px solid #ddd; page-break-inside: avoid; }
-        .relatorio:last-child { border-bottom: none; }
-        .relatorio h2 { color: #D85A30; font-size: 16px; margin-bottom: 4px; }
-        .meta { color: #888; font-size: 12px; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid #f0f0f0; }
-        .secao { margin-bottom: 12px; }
-        .secao strong { font-size: 13px; display: block; margin-bottom: 4px; }
-        .secao p { font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
-        .cinza { background: #f9f9f9; padding: 10px; border-radius: 6px; }
-        .alerta { background: #FCEBEB; padding: 10px; border-radius: 6px; border-left: 4px solid #A32D2D; }
-        .alerta strong { color: #A32D2D; }
-        .fotos { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
-        .fotos img { width: 100%; height: 220px; object-fit: cover; border-radius: 6px; border: 1px solid #eee; }
-        .btn-print { position: fixed; top: 16px; right: 16px; background: #D85A30; color: #fff; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: bold; box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
-        .btn-print:hover { background: #C04D25; }
-        @media print { .btn-print { display: none; } }
-      </style>
-    </head>
-    <body>
-      <button class="btn-print" onclick="window.print()">🖨 Salvar como PDF</button>
-      <div class="topo">
-        <h1>Relatório de Serviços Realizados</h1>
-        <p>🏗 Obra: <strong>${obraNome}</strong></p>
-        <p>📅 <strong style="text-transform:capitalize">${dataFormatada}</strong></p>
-        <p>📋 ${relatorios.length} relatório${relatorios.length !== 1 ? 's' : ''}</p>
-      </div>
-      ${conteudo}
-    </body>
-    </html>`)
-  janela.document.close()
-}
-
-  const janela = window.open('', '_blank')
-  janela.document.write(`<!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="utf-8">
-      <title>Relatórios ${obraNome} ${data}</title>
-      <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: Arial, sans-serif; padding: 40px; color: #222; max-width: 800px; margin: 0 auto; }
-        .topo { border-bottom: 3px solid #D85A30; padding-bottom: 16px; margin-bottom: 32px; }
-        .topo h1 { font-size: 20px; margin-bottom: 6px; }
-        .topo p { color: #666; font-size: 13px; margin-top: 3px; }
-        .relatorio { margin-bottom: 36px; padding-bottom: 28px; border-bottom: 1.5px solid #ddd; page-break-inside: avoid; }
-        .relatorio:last-child { border-bottom: none; }
-        .relatorio h2 { color: #D85A30; font-size: 16px; margin-bottom: 4px; }
-        .meta { color: #888; font-size: 12px; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid #f0f0f0; }
-        .secao { margin-bottom: 12px; }
-        .secao strong { font-size: 13px; display: block; margin-bottom: 4px; }
-        .secao p { font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
-        .cinza { background: #f9f9f9; padding: 10px; border-radius: 6px; }
-        .alerta { background: #FCEBEB; padding: 10px; border-radius: 6px; border-left: 4px solid #A32D2D; }
-        .alerta strong { color: #A32D2D; }
-        .fotos { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
-        .fotos img { width: 100%; height: 200px; object-fit: cover; border-radius: 6px; border: 1px solid #eee; }
-        .btn-print { position: fixed; top: 16px; right: 16px; background: #D85A30; color: #fff; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: bold; }
-        @media print { .btn-print { display: none; } }
-      </style>
-    </head>
-    <body>
-      <button class="btn-print" onclick="window.print()">🖨 Imprimir / Salvar PDF</button>
-      <div class="topo">
-        <h1>Relatório de Serviços Realizados</h1>
-        <p>🏗 Obra: <strong>${obraNome}</strong></p>
-        <p>📅 <strong style="text-transform:capitalize">${dataFormatada}</strong></p>
-        <p>📋 ${relatorios.length} relatório${relatorios.length !== 1 ? 's' : ''}</p>
-      </div>
-      ${conteudo}
-    </body>
-    </html>`)
-  janela.document.close()
-}
-
-  const dataFormatada = new Date(data + 'T12:00:00').toLocaleDateString('pt-BR', {
-    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
-  })
-
-  const html = `<!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="utf-8">
-      <title>Relatórios - ${obraNome} - ${data}</title>
-      <style>
-        * { box-sizing: border-box; }
-        body { font-family: Arial, sans-serif; padding: 40px; color: #2C2C2A; max-width: 820px; margin: 0 auto; font-size: 14px; }
-        h1 { color: #2C2C2A; font-size: 22px; margin: 0 0 8px; }
-        .topo { border-bottom: 3px solid #D85A30; padding-bottom: 16px; margin-bottom: 32px; }
-        .info { color: #666; font-size: 13px; margin-top: 4px; }
-        @media print {
-          body { padding: 20px; }
-          button { display: none; }
-        }
-      </style>
-    </head>
-    <body>
-      <div class="topo">
-        <h1>Relatório de Serviços Realizados</h1>
-        <div class="info">🏗 Obra: <strong>${obraNome}</strong></div>
-        <div class="info">📅 Data: <strong style="text-transform:capitalize">${dataFormatada}</strong></div>
-        <div class="info">📋 Total de relatórios: <strong>${relatorios.length}</strong></div>
-      </div>
-      ${conteudo}
-      <script>window.onload = () => window.print()</script>
-    </body>
-    </html>`
-
-  const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  window.open(url, '_blank')
-  setTimeout(() => URL.revokeObjectURL(url), 10000)
-}
-
-  const html = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="utf-8">
-      <title>Relatórios - ${obraNome} - ${data}</title>
-      <style>
-        body { font-family: Arial, sans-serif; padding: 40px; color: #2C2C2A; max-width: 800px; margin: 0 auto; }
-        h1 { color: #2C2C2A; border-bottom: 3px solid #D85A30; padding-bottom: 12px; }
-        .header { margin-bottom: 32px; }
-        .info { color: #888; font-size: 14px; margin-top: 4px; }
-        @media print { body { padding: 20px; } }
-      </style>
-    </head>
-    <body>
-      <div class="header">
-        <h1>Relatórios de Serviços Realizados</h1>
-        <div class="info">🏗 ${obraNome}</div>
-        <div class="info">📅 ${new Date(data + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</div>
-        <div class="info">Total de relatórios: ${relatorios.length}</div>
-      </div>
-      ${conteudo}
-    </body>
-    </html>
-  `
-
-  const blob = new Blob([html], { type: 'text/html' })
-  const url = URL.createObjectURL(blob)
-  const win = window.open(url, '_blank')
-  setTimeout(() => win?.print(), 1000)
-  URL.revokeObjectURL(url)
-}
-
-  const html = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="utf-8">
-      <title>Relatórios - ${obraNome} - ${data}</title>
-      <style>
-        body { font-family: Arial, sans-serif; padding: 40px; color: #2C2C2A; max-width: 800px; margin: 0 auto; }
-        h1 { color: #2C2C2A; border-bottom: 3px solid #D85A30; padding-bottom: 12px; }
-        .header { margin-bottom: 32px; }
-        .obra { color: #888; font-size: 14px; margin-top: 4px; }
-      </style>
-    </head>
-    <body>
-      <div class="header">
-        <h1>Relatórios de Serviços Realizados</h1>
-        <div class="obra">🏗 ${obraNome}</div>
-        <div class="obra">📅 ${new Date(data + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</div>
-        <div class="obra">Total de relatórios: ${relatorios.length}</div>
-      </div>
-      ${conteudo}
-    </body>
-    </html>
-  `
-
-  const blob = new Blob([html], { type: 'text/html' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `relatorios-${obraNome}-${data}.html`
-  a.click()
-  URL.revokeObjectURL(url)
+  doc.save(`relatorios-${obraNome}-${data}.pdf`)
 }
 
 export function RelatoriosList({ obraId }) {
@@ -284,6 +174,7 @@ export function RelatoriosList({ obraId }) {
   const [obraSelecionada, setObraSelecionada] = useState(null)
   const [relatorios, setRelatorios] = useState([])
   const [loading, setLoading] = useState(false)
+  const [gerandoPDF, setGerandoPDF] = useState(null)
   const [filtroSetor, setFiltroSetor] = useState('')
   const [diasAbertos, setDiasAbertos] = useState({})
 
@@ -309,15 +200,10 @@ export function RelatoriosList({ obraId }) {
     if (filtroSetor) q = q.eq('setor', filtroSetor)
     const { data } = await q
     setRelatorios(data || [])
-
-    // Abre o dia mais recente automaticamente
-    if (data && data.length > 0) {
-      setDiasAbertos({ [data[0].data_relatorio]: true })
-    }
+    if (data && data.length > 0) setDiasAbertos({ [data[0].data_relatorio]: true })
     setLoading(false)
   }
 
-  // Agrupa relatórios por data
   const porDia = relatorios.reduce((acc, r) => {
     const dia = r.data_relatorio
     if (!acc[dia]) acc[dia] = []
@@ -332,6 +218,15 @@ export function RelatoriosList({ obraId }) {
     return d.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })
   }
 
+  async function handleGerarPDF(dia, rels) {
+    setGerandoPDF(dia)
+    try {
+      await gerarPDF(dia, rels, obraSelecionada.nome)
+    } finally {
+      setGerandoPDF(null)
+    }
+  }
+
   return (
     <div className="page-content">
       <div className="section-header">
@@ -339,7 +234,6 @@ export function RelatoriosList({ obraId }) {
         <Link to="/relatorios/novo" className="btn btn-primary">+ Novo relatório</Link>
       </div>
 
-      {/* Abas de obras */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
         {obras.map(o => (
           <button key={o.id}
@@ -361,7 +255,6 @@ export function RelatoriosList({ obraId }) {
         )}
       </div>
 
-      {/* Filtro por setor */}
       {obraSelecionada && (
         <div style={{ display: 'flex', gap: 10, marginBottom: 16, alignItems: 'center', flexWrap: 'wrap' }}>
           <div style={{ fontSize: 13, color: 'var(--muted)' }}>
@@ -378,7 +271,6 @@ export function RelatoriosList({ obraId }) {
         </div>
       )}
 
-      {/* Relatórios agrupados por dia */}
       {!obraSelecionada ? (
         <div className="card">
           <div className="empty-state">
@@ -398,7 +290,6 @@ export function RelatoriosList({ obraId }) {
         </div>
       ) : Object.entries(porDia).map(([dia, rels]) => (
         <div key={dia} className="card" style={{ marginBottom: 14 }}>
-          {/* Cabeçalho do dia */}
           <div onClick={() => toggleDia(dia)}
             style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', background: diasAbertos[dia] ? 'var(--gray-dark)' : 'var(--surface)', borderRadius: diasAbertos[dia] ? '12px 12px 0 0' : 12, transition: 'all 0.2s' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -414,10 +305,11 @@ export function RelatoriosList({ obraId }) {
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <button
-                onClick={e => { e.stopPropagation(); gerarPDF(dia, rels, obraSelecionada.nome) }}
+                onClick={e => { e.stopPropagation(); handleGerarPDF(dia, rels) }}
                 className="btn btn-sm"
-                style={{ background: 'var(--teal)', color: '#fff', border: 'none', fontSize: 12 }}>
-                ⬇ Baixar PDF
+                disabled={gerandoPDF === dia}
+                style={{ background: gerandoPDF === dia ? 'var(--muted)' : 'var(--teal)', color: '#fff', border: 'none', fontSize: 12 }}>
+                {gerandoPDF === dia ? '⏳ Gerando...' : '⬇ Baixar PDF'}
               </button>
               <span style={{ color: diasAbertos[dia] ? '#fff' : 'var(--muted)', fontSize: 18, transition: 'transform 0.2s', display: 'inline-block', transform: diasAbertos[dia] ? 'rotate(180deg)' : 'rotate(0deg)' }}>
                 ▾
@@ -425,7 +317,6 @@ export function RelatoriosList({ obraId }) {
             </div>
           </div>
 
-          {/* Relatórios do dia */}
           {diasAbertos[dia] && rels.map(r => (
             <Link key={r.id} to={`/relatorios/${r.id}`} className="report-item" style={{ textDecoration: 'none', color: 'inherit' }}>
               <div style={{ width: 58, height: 58, borderRadius: 'var(--radius-sm)', overflow: 'hidden', flexShrink: 0, background: 'var(--gray-light)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
