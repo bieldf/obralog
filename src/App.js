@@ -9,15 +9,17 @@ import { RelatoriosList, RelatorioDetail, NovoRelatorio } from './pages/Relatori
 import Tarefas from './pages/Tarefas'
 import Projeto from './pages/Projeto'
 import Equipe from './pages/Equipe'
+import Pendencias from './pages/Pendencias'
 import './index.css'
 
 const pageTitles = {
   '/': 'Painel Geral',
-  '/relatorios': 'Relatórios de obra',
+  '/relatorios': 'Relatórios de serviços realizados',
   '/relatorios/novo': 'Novo relatório',
   '/projeto': 'Projeto & Plantas',
   '/tarefas': 'Tarefas',
   '/equipe': 'Equipe',
+  '/pendencias': 'Pendências',
 }
 
 function AppShell() {
@@ -31,21 +33,19 @@ function AppShell() {
   }, [user, profile])
 
   async function loadOrCreateObra() {
-    // Tenta buscar obras que o usuário é membro
-    const { data: membros } = await supabase
+    const { data: membro } = await supabase
       .from('obra_membros')
       .select('obra_id, obras(*)')
       .eq('user_id', profile.id)
       .limit(1)
       .single()
 
-    if (membros?.obras) {
-      setObra(membros.obras)
-      setObraId(membros.obras.id)
+    if (membro?.obras) {
+      setObra(membro.obras)
+      setObraId(membro.obras.id)
       return
     }
 
-    // Se engenheiro e sem obra, cria uma demo
     if (profile.role === 'engenheiro') {
       const { data: novaObra } = await supabase
         .from('obras')
@@ -68,7 +68,7 @@ function AppShell() {
   }
 
   if (loading) return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: 'var(--gray-dark)', color: '#fff', fontFamily: 'var(--font-display)', fontSize: 18 }}>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#2C2C2A', color: '#fff', fontFamily: 'sans-serif', fontSize: 18 }}>
       ObraLog…
     </div>
   )
@@ -83,7 +83,6 @@ function AppShell() {
     <div className="app">
       <Sidebar obra={obra} />
       <div className="main">
-        {/* Topbar */}
         <div className="topbar">
           <div className="page-title">{title}</div>
           <div className="topbar-right">
@@ -95,20 +94,27 @@ function AppShell() {
             </div>
           </div>
         </div>
-
         <Routes>
           <Route path="/" element={<Dashboard obraId={obraId} />} />
           <Route path="/relatorios" element={<RelatoriosList obraId={obraId} />} />
           <Route path="/relatorios/novo" element={<NovoRelatorio obraId={obraId} />} />
           <Route path="/relatorios/:id" element={<RelatorioDetail obraId={obraId} />} />
-          <Route path="/projeto" element={<Projeto obraId={obraId} obra={obra} onObraUpdate={refreshObra} onObraChange={(o) => { setObra(o); setObraId(o.id); }} />} />
+          <Route path="/projeto" element={<Projeto obraId={obraId} obra={obra} onObraUpdate={refreshObra} onObraChange={(o) => { setObra(o); setObraId(o.id) }} />} />
           <Route path="/tarefas" element={<Tarefas obraId={obraId} />} />
           <Route path="/equipe" element={<Equipe obraId={obraId} />} />
+          <Route path="/pendencias" element={<Pendencias obraId={obraId} />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </div>
     </div>
   )
+}
+
+function LoginRoute() {
+  const { user, loading } = useAuth()
+  if (loading) return null
+  if (user) return <Navigate to="/" replace />
+  return <Login />
 }
 
 export default function App() {
@@ -122,11 +128,4 @@ export default function App() {
       </BrowserRouter>
     </AuthProvider>
   )
-}
-
-function LoginRoute() {
-  const { user, loading } = useAuth()
-  if (loading) return null
-  if (user) return <Navigate to="/" replace />
-  return <Login />
 }
