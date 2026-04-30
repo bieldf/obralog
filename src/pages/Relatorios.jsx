@@ -7,57 +7,128 @@ const statusBadge = { novo: 'badge-blue', em_andamento: 'badge-amber', concluido
 const statusLabel = { novo: 'Novo', em_andamento: 'Em andamento', concluido: 'Concluído', em_revisao: 'Em revisão' }
 
 async function gerarPDF(data, relatorios, obraNome) {
+  const btn = document.querySelector('[data-gerando]')
+  if (btn) btn.textContent = 'Gerando...'
+
+  // Busca todas as fotos dos relatórios do dia
   const { data: todasFotos } = await supabase
     .from('relatorio_fotos')
     .select('relatorio_id, url')
     .in('relatorio_id', relatorios.map(r => r.id))
 
-  const fotosPorRelatorio = (todasFotos || []).reduce((acc, f) => {
-    if (!acc[f.relatorio_id]) acc[f.relatorio_id] = []
-    acc[f.relatorio_id].push(f.url)
-    return acc
-  }, {})
+  // Converte cada foto para base64 usando o Supabase Storage diretamente
+  const fotosPorRelatorio = {}
+  for (const foto of (todasFotos || [])) {
+    if (!fotosPorRelatorio[foto.relatorio_id]) {
+      fotosPorRelatorio[foto.relatorio_id] = []
+    }
+    try {
+      // Extrai o path do arquivo da URL pública
+      const urlObj = new URL(foto.url)
+      const path = urlObj.pathname.split('/fotos-relatorios/')[1]
+      
+      // Baixa o arquivo diretamente do Supabase Storage
+      const { data: fileData, error } = await supabase.storage
+        .from('fotos-relatorios')
+        .download(path)
+      
+      if (!error && fileData) {
+        const base64 = await new Promise(resolve => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(reader.result)
+          reader.readAsDataURL(fileData)
+        })
+        fotosPorRelatorio[foto.relatorio_id].push(base64)
+      }
+    } catch {
+      fotosPorRelatorio[foto.relatorio_id].push(foto.url)
+    }
+  }
 
   const dataFormatada = new Date(data + 'T12:00:00').toLocaleDateString('pt-BR', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
   })
 
-  const conteudo = relatorios.map((r, idx) => `
-    <div class="relatorio">
-      <h2>${r.titulo}</h2>
-      <p class="meta">${r.setor} · ${r.profiles?.nome || 'Sem autor'} · ${statusLabel[r.status] || r.status}</p>
+  const conteudo = relatorios.map(r => {
+    const fotos = fotosPorRelatorio[r.id] || []
+    return `
+      <div class="relatorio">
+        <h2>${r.titulo}</h2>
+        <p class="meta">${r.setor} · ${r.profiles?.nome || 'Sem autor'} · ${statusLabel[r.status] || r.status}</p>
 
-      <div class="secao">
-        <strong>Atividades realizadas:</strong>
-        <p>${r.descricao}</p>
-      </div>
-
-      ${r.materiais ? `
-        <div class="secao cinza">
-          <strong>Materiais utilizados:</strong>
-          <p>${r.materiais}</p>
-        </div>
-      ` : ''}
-
-      ${(fotosPorRelatorio[r.id] || []).length > 0 ? `
         <div class="secao">
-          <strong>Fotos (${fotosPorRelatorio[r.id].length}):</strong>
-          <div class="fotos">
-            ${fotosPorRelatorio[r.id].map(url => `
-              <img src="${url}" crossorigin="anonymous" />
-            `).join('')}
-          </div>
+          <strong>Atividades realizadas:</strong>
+          <p>${r.descricao}</p>
         </div>
-      ` : ''}
 
-      ${r.observacoes ? `
-        <div class="secao alerta">
-          <strong>⚠ Observações:</strong>
-          <p>${r.observacoes}</p>
-        </div>
-      ` : ''}
-    </div>
-  `).join('')
+        ${r.materiais ? `
+          <div class="secao cinza">
+            <strong>Materiais utilizados:</strong>
+            <p>${r.materiais}</p>
+          </div>
+        ` : ''}
+
+        ${fotos.length > 0 ? `
+          <div class="secao">
+            <strong>Fotos (${fotos.length}):</strong>
+            <div class="fotos">
+              ${fotos.map(src => `<img src="${src}" />`).join('')}
+            </div>
+          </div>
+        ` : ''}
+
+        ${r.observacoes ? `
+          <div class="secao alerta">
+            <strong>⚠ Observações:</strong>
+            <p>${r.observacoes}</p>
+          </div>
+        ` : ''}
+      </div>
+    `
+  }).join('')
+
+  const janela = window.open('', '_blank')
+  janela.document.write(`<!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Relatórios ${obraNome} ${data}</title>
+      <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: Arial, sans-serif; padding: 40px; color: #222; max-width: 800px; margin: 0 auto; }
+        .topo { border-bottom: 3px solid #D85A30; padding-bottom: 16px; margin-bottom: 32px; }
+        .topo h1 { font-size: 20px; margin-bottom: 6px; }
+        .topo p { color: #666; font-size: 13px; margin-top: 3px; }
+        .relatorio { margin-bottom: 36px; padding-bottom: 28px; border-bottom: 1.5px solid #ddd; page-break-inside: avoid; }
+        .relatorio:last-child { border-bottom: none; }
+        .relatorio h2 { color: #D85A30; font-size: 16px; margin-bottom: 4px; }
+        .meta { color: #888; font-size: 12px; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid #f0f0f0; }
+        .secao { margin-bottom: 12px; }
+        .secao strong { font-size: 13px; display: block; margin-bottom: 4px; }
+        .secao p { font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
+        .cinza { background: #f9f9f9; padding: 10px; border-radius: 6px; }
+        .alerta { background: #FCEBEB; padding: 10px; border-radius: 6px; border-left: 4px solid #A32D2D; }
+        .alerta strong { color: #A32D2D; }
+        .fotos { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
+        .fotos img { width: 100%; height: 220px; object-fit: cover; border-radius: 6px; border: 1px solid #eee; }
+        .btn-print { position: fixed; top: 16px; right: 16px; background: #D85A30; color: #fff; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: bold; box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
+        .btn-print:hover { background: #C04D25; }
+        @media print { .btn-print { display: none; } }
+      </style>
+    </head>
+    <body>
+      <button class="btn-print" onclick="window.print()">🖨 Salvar como PDF</button>
+      <div class="topo">
+        <h1>Relatório de Serviços Realizados</h1>
+        <p>🏗 Obra: <strong>${obraNome}</strong></p>
+        <p>📅 <strong style="text-transform:capitalize">${dataFormatada}</strong></p>
+        <p>📋 ${relatorios.length} relatório${relatorios.length !== 1 ? 's' : ''}</p>
+      </div>
+      ${conteudo}
+    </body>
+    </html>`)
+  janela.document.close()
+}
 
   const janela = window.open('', '_blank')
   janela.document.write(`<!DOCTYPE html>
