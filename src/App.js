@@ -101,7 +101,7 @@ function AppShell() {
           <Route path="/relatorios" element={<RelatoriosList obraId={obraId} />} />
           <Route path="/relatorios/novo" element={<NovoRelatorio obraId={obraId} />} />
           <Route path="/relatorios/:id" element={<RelatorioDetail obraId={obraId} />} />
-          <Route path="/projeto" element={<Projeto obraId={obraId} obra={obra} onObraUpdate={refreshObra} />} />
+          <Route path="/projeto" element={<Projeto obraId={obraId} obra={obra} onObraUpdate={refreshObra} onObraChange={(o) => { setObra(o); setObraId(o.id); }} />} />
           <Route path="/tarefas" element={<Tarefas obraId={obraId} />} />
           <Route path="/equipe" element={<Equipe obraId={obraId} />} />
           <Route path="*" element={<Navigate to="/" replace />} />
