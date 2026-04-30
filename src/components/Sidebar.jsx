@@ -35,6 +35,10 @@ export default function Sidebar({ obra }) {
           <Icon d="M4 1h8l3 3v10a1 1 0 01-1 1H2a1 1 0 01-1-1V2a1 1 0 011-1zm7 0v3h3L11 1zM4 8h8v1H4V8zm0 2.5h8v1H4v-1zm0 2.5h5v1H4v-1z" />
           Relatórios
         </NavLink>
+        <NavLink to="/pendencias" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}>
+          <Icon d="M2 1h12a1 1 0 011 1v12a1 1 0 01-1 1H2a1 1 0 01-1-1V2a1 1 0 011-1zm1 3v2h10V4H3zm0 4v2h7V8H3zm0 4v1h5v-1H3z" />
+          Pendências
+        </NavLink>
         <NavLink to="/projeto" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}>
           <Icon d="M1 1h14v2H1V1zm0 4h14v2H1V5zm0 4h9v2H1V9zm0 4h6v2H1v-2z" />
           Projeto / Plantas
@@ -61,26 +65,34 @@ export default function Sidebar({ obra }) {
         {obra ? (
           <div className="obra-card">
             <div className="obra-name">{obra.nome}</div>
-            <div className="obra-status">{obra.status === 'em_andamento' ? 'Em andamento' : obra.status} · {obra.endereco || ''}</div>
+            <div className="obra-status">
+              {obra.status === 'em_andamento' ? 'Em andamento' : obra.status}
+            </div>
             <div className="obra-progress">
               <div className="obra-progress-fill" style={{ width: `${obra.progresso || 0}%` }} />
             </div>
           </div>
         ) : (
           <div className="obra-card">
-            <div className="obra-name" style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11 }}>Nenhuma obra selecionada</div>
+            <div className="obra-name" style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11 }}>
+              Nenhuma obra selecionada
+            </div>
           </div>
         )}
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12, padding: '0 2px' }}>
-          <div className="avatar" style={{ background: 'var(--orange-light)', color: 'var(--orange)', flexShrink: 0 }}>{initials}</div>
+          <div className="avatar" style={{ background: 'var(--orange-light)', color: 'var(--orange)', flexShrink: 0 }}>
+            {initials}
+          </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 12, fontWeight: 500, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {profile?.nome || 'Usuário'}
             </div>
             <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>{profile?.role}</div>
           </div>
-          <button onClick={handleSignOut} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.3)', fontSize: 13, padding: 4 }} title="Sair">⏻</button>
+          <button onClick={handleSignOut} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.3)', fontSize: 13, padding: 4 }} title="Sair">
+            ⏻
+          </button>
         </div>
       </div>
     </div>
