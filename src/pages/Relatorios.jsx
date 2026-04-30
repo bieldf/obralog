@@ -6,10 +6,36 @@ import { useAuth } from '../hooks/useAuth'
 const statusBadge = { novo: 'badge-blue', em_andamento: 'badge-amber', concluido: 'badge-teal', em_revisao: 'badge-orange' }
 const statusLabel = { novo: 'Novo', em_andamento: 'Em andamento', concluido: 'Concluído', em_revisao: 'Em revisão' }
 
-// Gera PDF de todos os relatórios de um dia
 async function gerarPDF(data, relatorios, obraNome) {
-  const conteudo = relatorios.map(r => `
-    <div style="margin-bottom:32px;padding-bottom:24px;border-bottom:1px solid #eee">
+  // Busca fotos de cada relatório
+  const relatoriosComFotos = await Promise.all(
+    relatorios.map(async r => {
+      const { data: fotos } = await supabase
+        .from('relatorio_fotos')
+        .select('url, nome_arquivo')
+        .eq('relatorio_id', r.id)
+
+      // Converte cada foto para base64
+      const fotosBase64 = await Promise.all(
+        (fotos || []).map(async f => {
+          try {
+            const resp = await fetch(f.url)
+            const blob = await resp.blob()
+            return await new Promise(resolve => {
+              const reader = new FileReader()
+              reader.onload = () => resolve(reader.result)
+              reader.readAsDataURL(blob)
+            })
+          } catch { return null }
+        })
+      )
+
+      return { ...r, fotosBase64: fotosBase64.filter(Boolean) }
+    })
+  )
+
+  const conteudo = relatoriosComFotos.map(r => `
+    <div style="margin-bottom:32px;padding-bottom:24px;border-bottom:2px solid #eee;page-break-inside:avoid">
       <h2 style="color:#D85A30;margin:0 0 8px">${r.titulo}</h2>
       <p style="color:#888;font-size:13px;margin:0 0 12px">${r.setor} · ${r.profiles?.nome || 'Sem autor'}</p>
       <div style="margin-bottom:10px">
@@ -17,10 +43,53 @@ async function gerarPDF(data, relatorios, obraNome) {
         <p style="margin:6px 0;line-height:1.6">${r.descricao}</p>
       </div>
       ${r.materiais ? `<div style="margin-bottom:10px"><strong>Materiais:</strong><p style="margin:6px 0">${r.materiais}</p></div>` : ''}
-      ${r.observacoes ? `<div style="background:#FCEBEB;padding:10px;border-radius:6px"><strong style="color:#A32D2D">Observações:</strong><p style="margin:6px 0">${r.observacoes}</p></div>` : ''}
+      ${r.observacoes ? `<div style="background:#FCEBEB;padding:10px;border-radius:6px;margin-bottom:10px"><strong style="color:#A32D2D">Observações:</strong><p style="margin:6px 0">${r.observacoes}</p></div>` : ''}
+      ${r.fotosBase64.length > 0 ? `
+        <div style="margin-top:12px">
+          <strong>Fotos (${r.fotosBase64.length}):</strong>
+          <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:10px">
+            ${r.fotosBase64.map(src => `
+              <img src="${src}" style="width:100%;border-radius:6px;border:1px solid #eee;object-fit:cover;max-height:250px" />
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
       <p style="margin-top:10px;font-size:12px;color:#888">Status: ${statusLabel[r.status] || r.status}</p>
     </div>
   `).join('')
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Relatórios - ${obraNome} - ${data}</title>
+      <style>
+        body { font-family: Arial, sans-serif; padding: 40px; color: #2C2C2A; max-width: 800px; margin: 0 auto; }
+        h1 { color: #2C2C2A; border-bottom: 3px solid #D85A30; padding-bottom: 12px; }
+        .header { margin-bottom: 32px; }
+        .info { color: #888; font-size: 14px; margin-top: 4px; }
+        @media print { body { padding: 20px; } }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <h1>Relatórios de Serviços Realizados</h1>
+        <div class="info">🏗 ${obraNome}</div>
+        <div class="info">📅 ${new Date(data + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</div>
+        <div class="info">Total de relatórios: ${relatorios.length}</div>
+      </div>
+      ${conteudo}
+    </body>
+    </html>
+  `
+
+  const blob = new Blob([html], { type: 'text/html' })
+  const url = URL.createObjectURL(blob)
+  const win = window.open(url, '_blank')
+  setTimeout(() => win?.print(), 1000)
+  URL.revokeObjectURL(url)
+}
 
   const html = `
     <!DOCTYPE html>
