@@ -9,7 +9,7 @@ import { RelatoriosList, RelatorioDetail, NovoRelatorio } from './pages/Relatori
 import Tarefas from './pages/Tarefas'
 import Projeto from './pages/Projeto'
 import Equipe from './pages/Equipe'
-import Pendencias from './pages/Pendencias'
+import Pendencias, { PendenciaDetail } from './pages/Pendencias'
 import './index.css'
 
 const pageTitles = {
@@ -77,6 +77,8 @@ function AppShell() {
 
   const title = location.pathname.startsWith('/relatorios/') && location.pathname !== '/relatorios/novo'
     ? 'Detalhe do relatório'
+    : location.pathname.startsWith('/pendencias/') 
+    ? 'Detalhe da pendência'
     : pageTitles[location.pathname] || 'ObraLog'
 
   return (
@@ -103,6 +105,7 @@ function AppShell() {
           <Route path="/tarefas" element={<Tarefas obraId={obraId} />} />
           <Route path="/equipe" element={<Equipe obraId={obraId} />} />
           <Route path="/pendencias" element={<Pendencias obraId={obraId} />} />
+          <Route path="/pendencias/:id" element={<PendenciaDetail />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </div>
