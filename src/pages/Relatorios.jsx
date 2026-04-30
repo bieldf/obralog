@@ -7,56 +7,111 @@ const statusBadge = { novo: 'badge-blue', em_andamento: 'badge-amber', concluido
 const statusLabel = { novo: 'Novo', em_andamento: 'Em andamento', concluido: 'Concluído', em_revisao: 'Em revisão' }
 
 async function gerarPDF(data, relatorios, obraNome) {
-  // Busca fotos de cada relatório
+  // Busca fotos de cada relatório e converte para base64
   const relatoriosComFotos = await Promise.all(
     relatorios.map(async r => {
       const { data: fotos } = await supabase
         .from('relatorio_fotos')
-        .select('url, nome_arquivo')
+        .select('url')
         .eq('relatorio_id', r.id)
 
-      // Converte cada foto para base64
       const fotosBase64 = await Promise.all(
         (fotos || []).map(async f => {
           try {
-            const resp = await fetch(f.url)
+            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(f.url)}`
+            const resp = await fetch(proxyUrl)
             const blob = await resp.blob()
             return await new Promise(resolve => {
               const reader = new FileReader()
               reader.onload = () => resolve(reader.result)
               reader.readAsDataURL(blob)
             })
-          } catch { return null }
+          } catch {
+            return f.url
+          }
         })
       )
-
-      return { ...r, fotosBase64: fotosBase64.filter(Boolean) }
+      return { ...r, fotosBase64 }
     })
   )
 
-  const conteudo = relatoriosComFotos.map(r => `
-    <div style="margin-bottom:32px;padding-bottom:24px;border-bottom:2px solid #eee;page-break-inside:avoid">
-      <h2 style="color:#D85A30;margin:0 0 8px">${r.titulo}</h2>
-      <p style="color:#888;font-size:13px;margin:0 0 12px">${r.setor} · ${r.profiles?.nome || 'Sem autor'}</p>
-      <div style="margin-bottom:10px">
-        <strong>Atividades realizadas:</strong>
-        <p style="margin:6px 0;line-height:1.6">${r.descricao}</p>
+  const conteudo = relatoriosComFotos.map((r, idx) => `
+    <div style="margin-bottom:40px;padding-bottom:32px;${idx < relatoriosComFotos.length - 1 ? 'border-bottom:2px solid #ddd;' : ''}page-break-inside:avoid">
+      <h2 style="color:#D85A30;margin:0 0 6px;font-size:18px">${r.titulo}</h2>
+      <p style="color:#888;font-size:13px;margin:0 0 16px;border-bottom:1px solid #f0f0f0;padding-bottom:10px">
+        ${r.setor} · ${r.profiles?.nome || 'Sem autor'} · Status: ${statusLabel[r.status] || r.status}
+      </p>
+
+      <div style="margin-bottom:16px">
+        <p style="font-weight:bold;margin:0 0 6px;font-size:14px">Atividades realizadas:</p>
+        <p style="margin:0;line-height:1.7;font-size:14px;white-space:pre-wrap">${r.descricao}</p>
       </div>
-      ${r.materiais ? `<div style="margin-bottom:10px"><strong>Materiais:</strong><p style="margin:6px 0">${r.materiais}</p></div>` : ''}
-      ${r.observacoes ? `<div style="background:#FCEBEB;padding:10px;border-radius:6px;margin-bottom:10px"><strong style="color:#A32D2D">Observações:</strong><p style="margin:6px 0">${r.observacoes}</p></div>` : ''}
+
+      ${r.materiais ? `
+        <div style="margin-bottom:16px;padding:12px;background:#f9f9f9;border-radius:6px">
+          <p style="font-weight:bold;margin:0 0 4px;font-size:14px">Materiais utilizados:</p>
+          <p style="margin:0;font-size:14px">${r.materiais}</p>
+        </div>
+      ` : ''}
+
       ${r.fotosBase64.length > 0 ? `
-        <div style="margin-top:12px">
-          <strong>Fotos (${r.fotosBase64.length}):</strong>
-          <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:10px">
+        <div style="margin-bottom:16px">
+          <p style="font-weight:bold;margin:0 0 10px;font-size:14px">Fotos (${r.fotosBase64.length}):</p>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
             ${r.fotosBase64.map(src => `
-              <img src="${src}" style="width:100%;border-radius:6px;border:1px solid #eee;object-fit:cover;max-height:250px" />
+              <img src="${src}" style="width:100%;height:220px;object-fit:cover;border-radius:6px;border:1px solid #eee;display:block" />
             `).join('')}
           </div>
         </div>
       ` : ''}
-      <p style="margin-top:10px;font-size:12px;color:#888">Status: ${statusLabel[r.status] || r.status}</p>
+
+      ${r.observacoes ? `
+        <div style="padding:12px;background:#FCEBEB;border-radius:6px;border-left:4px solid #A32D2D">
+          <p style="font-weight:bold;color:#A32D2D;margin:0 0 4px;font-size:14px">⚠ Observações / Problemas:</p>
+          <p style="margin:0;font-size:14px">${r.observacoes}</p>
+        </div>
+      ` : ''}
     </div>
   `).join('')
+
+  const dataFormatada = new Date(data + 'T12:00:00').toLocaleDateString('pt-BR', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+  })
+
+  const html = `<!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Relatórios - ${obraNome} - ${data}</title>
+      <style>
+        * { box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; padding: 40px; color: #2C2C2A; max-width: 820px; margin: 0 auto; font-size: 14px; }
+        h1 { color: #2C2C2A; font-size: 22px; margin: 0 0 8px; }
+        .topo { border-bottom: 3px solid #D85A30; padding-bottom: 16px; margin-bottom: 32px; }
+        .info { color: #666; font-size: 13px; margin-top: 4px; }
+        @media print {
+          body { padding: 20px; }
+          button { display: none; }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="topo">
+        <h1>Relatório de Serviços Realizados</h1>
+        <div class="info">🏗 Obra: <strong>${obraNome}</strong></div>
+        <div class="info">📅 Data: <strong style="text-transform:capitalize">${dataFormatada}</strong></div>
+        <div class="info">📋 Total de relatórios: <strong>${relatorios.length}</strong></div>
+      </div>
+      ${conteudo}
+      <script>window.onload = () => window.print()</script>
+    </body>
+    </html>`
+
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  window.open(url, '_blank')
+  setTimeout(() => URL.revokeObjectURL(url), 10000)
+}
 
   const html = `
     <!DOCTYPE html>
