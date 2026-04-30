@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link, useNavigate, useParams, Routes, Route } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
 import { jsPDF } from 'jspdf'
@@ -26,7 +27,6 @@ async function gerarPDFCategoria(categoria, pendencias, obraNome) {
     if (y + needed > 280) { doc.addPage(); y = 20 }
   }
 
-  // Cabeçalho
   doc.setFillColor(216, 90, 48)
   doc.rect(0, 0, W, 18, 'F')
   doc.setFontSize(14)
@@ -47,7 +47,6 @@ async function gerarPDFCategoria(categoria, pendencias, obraNome) {
   doc.line(margin, y, W - margin, y)
   y += 10
 
-  // Busca fotos
   const { data: todasFotos } = await supabase
     .from('pendencia_fotos')
     .select('pendencia_id, url')
@@ -74,22 +73,14 @@ async function gerarPDFCategoria(categoria, pendencias, obraNome) {
   for (let i = 0; i < pendencias.length; i++) {
     const p = pendencias[i]
     const fotos = fotosPorPendencia[p.id] || []
-
     checkPage(20)
-
-    // Status checkbox visual
     const concluida = p.status === 'concluida'
-    doc.setFillColor(concluida ? 29 : 255, concluida ? 158 : 255, concluida ? 117 : 255)
+    doc.setFillColor(concluida ? 225 : 250, concluida ? 245 : 236, concluida ? 238 : 231)
     doc.roundedRect(margin, y - 5, maxW, 12, 2, 2, 'F')
-    doc.setFontSize(13)
-    doc.setFont('helvetica', 'bold')
-    doc.setTextColor(concluida ? 255 : 216, concluida ? 255 : 90, concluida ? 255 : 48)
-    doc.text(`${concluida ? '✓' : '○'} ${p.titulo}`, margin + 3, y + 3)
+    addText(`${concluida ? '✓' : '○'} ${p.titulo}`, margin + 3, 13, true, concluida ? [29, 158, 117] : [216, 90, 48])
     y += 10
-
     addText(`${p.prioridade} · ${statusLabel[p.status]} · ${new Date(p.data_criacao + 'T12:00:00').toLocaleDateString('pt-BR')}`, margin, 10, false, [130, 130, 130])
     y += 8
-
     if (p.descricao) {
       checkPage(10)
       addText('Descrição:', margin, 11, true, [34, 34, 34])
@@ -98,14 +89,9 @@ async function gerarPDFCategoria(categoria, pendencias, obraNome) {
       doc.setFont('helvetica', 'normal')
       doc.setTextColor(60, 60, 60)
       const linhas = doc.splitTextToSize(p.descricao, maxW)
-      for (const linha of linhas) {
-        checkPage(6)
-        doc.text(linha, margin, y)
-        y += 5.5
-      }
+      for (const linha of linhas) { checkPage(6); doc.text(linha, margin, y); y += 5.5 }
       y += 4
     }
-
     if (fotos.length > 0) {
       checkPage(10)
       addText(`Fotos (${fotos.length}):`, margin, 11, true, [34, 34, 34])
@@ -115,14 +101,11 @@ async function gerarPDFCategoria(categoria, pendencias, obraNome) {
       for (let f = 0; f < fotos.length; f += 2) {
         checkPage(fotoH + 5)
         try { doc.addImage(fotos[f], 'JPEG', margin, y, fotoW, fotoH) } catch { }
-        if (fotos[f + 1]) {
-          try { doc.addImage(fotos[f + 1], 'JPEG', margin + fotoW + 5, y, fotoW, fotoH) } catch { }
-        }
+        if (fotos[f + 1]) { try { doc.addImage(fotos[f + 1], 'JPEG', margin + fotoW + 5, y, fotoW, fotoH) } catch { } }
         y += fotoH + 5
       }
       y += 4
     }
-
     if (i < pendencias.length - 1) {
       checkPage(10)
       doc.setDrawColor(220, 220, 220)
@@ -131,10 +114,102 @@ async function gerarPDFCategoria(categoria, pendencias, obraNome) {
       y += 10
     }
   }
-
   doc.save(`pendencias-${categoria}-${obraNome}.pdf`)
 }
 
+// ─── Detalhe da pendência ────────────────────────────────────────────────
+export function PendenciaDetail() {
+  const { id } = useParams()
+  const navigate = useNavigate()
+  const [pend, setPend] = useState(null)
+  const [fotos, setFotos] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => { load() }, [id])
+
+  async function load() {
+    const [{ data: p }, { data: f }] = await Promise.all([
+      supabase.from('pendencias').select('*, profiles(nome, role), obras(nome)').eq('id', id).single(),
+      supabase.from('pendencia_fotos').select('*').eq('pendencia_id', id),
+    ])
+    setPend(p)
+    setFotos(f || [])
+    setLoading(false)
+  }
+
+  async function toggleStatus() {
+    const next = pend.status === 'concluida' ? 'pendente'
+      : pend.status === 'pendente' ? 'em_andamento' : 'concluida'
+    const update = { status: next }
+    if (next === 'concluida') update.data_conclusao = new Date().toISOString().split('T')[0]
+    await supabase.from('pendencias').update(update).eq('id', id)
+    load()
+  }
+
+  if (loading) return <div className="loading">Carregando...</div>
+  if (!pend) return <div className="loading">Pendência não encontrada.</div>
+
+  const initials = pend.profiles?.nome?.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() || 'U'
+
+  return (
+    <div className="page-content">
+      <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <button className="btn btn-sm" onClick={() => navigate('/pendencias')}>← Voltar</button>
+        <span className={`badge ${statusColor[pend.status]}`}>{statusLabel[pend.status]}</span>
+        <span className={`badge ${prioColor[pend.prioridade]}`}>{pend.prioridade}</span>
+        <span className="badge badge-blue">{pend.categoria}</span>
+        {pend.obras?.nome && <span className="badge badge-gray">🏗 {pend.obras.nome}</span>}
+        <button onClick={toggleStatus} className="btn btn-sm" style={{ marginLeft: 'auto', background: pend.status === 'concluida' ? 'var(--teal)' : 'var(--orange)', color: '#fff', border: 'none' }}>
+          {pend.status === 'concluida' ? '↩ Reabrir' : pend.status === 'pendente' ? '▶ Iniciar' : '✓ Concluir'}
+        </button>
+      </div>
+
+      <div className="card" style={{ marginBottom: 20 }}>
+        <div className="card-header">
+          <span className="card-title" style={{ textDecoration: pend.status === 'concluida' ? 'line-through' : 'none', color: pend.status === 'concluida' ? 'var(--muted)' : 'var(--text)' }}>
+            {pend.titulo}
+          </span>
+        </div>
+        <div style={{ padding: '16px 18px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 12, background: 'var(--gray-light)', borderRadius: 'var(--radius-sm)', marginBottom: 18 }}>
+            <div className="avatar" style={{ background: 'var(--orange-light)', color: 'var(--orange)', width: 40, height: 40, fontSize: 14 }}>{initials}</div>
+            <div>
+              <div style={{ fontWeight: 500, fontSize: 14 }}>{pend.profiles?.nome}</div>
+              <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                Criado em {new Date(pend.data_criacao + 'T12:00:00').toLocaleDateString('pt-BR')}
+                {pend.data_conclusao && ` · Concluído em ${new Date(pend.data_conclusao + 'T12:00:00').toLocaleDateString('pt-BR')}`}
+              </div>
+            </div>
+          </div>
+
+          {pend.descricao && (
+            <div style={{ marginBottom: 16 }}>
+              <div className="form-label">Descrição</div>
+              <p style={{ fontSize: 14, lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{pend.descricao}</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {fotos.length > 0 && (
+        <div className="card">
+          <div className="card-header"><span className="card-title">Fotos ({fotos.length})</span></div>
+          <div style={{ padding: 16 }}>
+            <div className="photo-grid">
+              {fotos.map(f => (
+                <a key={f.id} href={f.url} target="_blank" rel="noreferrer">
+                  <img src={f.url} alt="" className="photo-thumb" />
+                </a>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Lista de pendências ─────────────────────────────────────────────────
 export default function Pendencias({ obraId }) {
   const { profile } = useAuth()
   const [obras, setObras] = useState([])
@@ -143,7 +218,7 @@ export default function Pendencias({ obraId }) {
   const [loading, setLoading] = useState(false)
   const [modal, setModal] = useState(false)
   const [gerandoPDF, setGerandoPDF] = useState(null)
-  const [visualizacao, setVisualizacao] = useState('categoria') // 'categoria' | 'data'
+  const [visualizacao, setVisualizacao] = useState('categoria')
   const [filtroCategoria, setFiltroCategoria] = useState('')
   const [filtroStatus, setFiltroStatus] = useState('')
   const [fotos, setFotos] = useState([])
@@ -194,7 +269,6 @@ export default function Pendencias({ obraId }) {
         ...form, obra_id: obraSelecionada.id, autor_id: profile.id
       }).select().single()
       if (error) throw error
-
       for (const foto of fotos) {
         const ext = foto.name.split('.').pop()
         const nome = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
@@ -204,7 +278,6 @@ export default function Pendencias({ obraId }) {
           await supabase.from('pendencia_fotos').insert({ pendencia_id: pend.id, url: urlData.publicUrl, nome_arquivo: foto.name })
         }
       }
-
       setModal(false)
       setForm({ titulo: '', descricao: '', categoria: 'Outros', prioridade: 'media', data_criacao: new Date().toISOString().split('T')[0] })
       setFotos([])
@@ -226,21 +299,16 @@ export default function Pendencias({ obraId }) {
 
   async function handleGerarPDF(categoria, items) {
     setGerandoPDF(categoria)
-    try {
-      await gerarPDFCategoria(categoria, items, obraSelecionada.nome)
-    } finally {
-      setGerandoPDF(null)
-    }
+    try { await gerarPDFCategoria(categoria, items, obraSelecionada.nome) }
+    finally { setGerandoPDF(null) }
   }
 
-  // Agrupa por categoria
   const porCategoria = pendencias.reduce((acc, p) => {
     if (!acc[p.categoria]) acc[p.categoria] = []
     acc[p.categoria].push(p)
     return acc
   }, {})
 
-  // Agrupa por data
   const porData = pendencias.reduce((acc, p) => {
     const dia = p.data_criacao
     if (!acc[dia]) acc[dia] = []
@@ -254,14 +322,13 @@ export default function Pendencias({ obraId }) {
 
   const PendenciaCard = ({ p }) => (
     <div style={{ padding: '14px 18px', borderBottom: '0.5px solid var(--border)', display: 'flex', gap: 14, alignItems: 'flex-start' }}>
-      {/* Checkbox */}
-      <button onClick={() => toggleStatus(p)}
+      <button onClick={(e) => { e.stopPropagation(); toggleStatus(p) }}
         style={{ width: 24, height: 24, borderRadius: 6, border: `2px solid ${p.status === 'concluida' ? 'var(--teal)' : p.status === 'em_andamento' ? 'var(--amber)' : 'var(--border)'}`, background: p.status === 'concluida' ? 'var(--teal)' : p.status === 'em_andamento' ? 'var(--amber-light)' : 'transparent', cursor: 'pointer', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 2 }}>
         {p.status === 'concluida' && <span style={{ color: '#fff', fontSize: 14, lineHeight: 1 }}>✓</span>}
         {p.status === 'em_andamento' && <span style={{ color: 'var(--amber)', fontSize: 10 }}>●</span>}
       </button>
 
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <Link to={`/pendencias/${p.id}`} style={{ flex: 1, minWidth: 0, textDecoration: 'none', color: 'inherit' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, gap: 8, flexWrap: 'wrap' }}>
           <div style={{ fontWeight: 500, fontSize: 13.5, textDecoration: p.status === 'concluida' ? 'line-through' : 'none', color: p.status === 'concluida' ? 'var(--muted)' : 'var(--text)' }}>
             {p.titulo}
@@ -273,18 +340,18 @@ export default function Pendencias({ obraId }) {
         </div>
 
         {p.descricao && (
-          <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6, lineHeight: 1.5 }}>{p.descricao}</div>
+          <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6, lineHeight: 1.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {p.descricao}
+          </div>
         )}
 
         {p.pendencia_fotos?.length > 0 && (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
             {p.pendencia_fotos.slice(0, 4).map((f, i) => (
-              <a key={i} href={f.url} target="_blank" rel="noreferrer">
-                <img src={f.url} alt="" style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 6, border: '0.5px solid var(--border)' }} />
-              </a>
+              <img key={i} src={f.url} alt="" style={{ width: 52, height: 52, objectFit: 'cover', borderRadius: 6, border: '0.5px solid var(--border)' }} />
             ))}
             {p.pendencia_fotos.length > 4 && (
-              <div style={{ width: 56, height: 56, borderRadius: 6, background: 'var(--gray-light)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: 'var(--muted)' }}>
+              <div style={{ width: 52, height: 52, borderRadius: 6, background: 'var(--gray-light)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: 'var(--muted)' }}>
                 +{p.pendencia_fotos.length - 4}
               </div>
             )}
@@ -296,7 +363,7 @@ export default function Pendencias({ obraId }) {
           <span>👤 {p.profiles?.nome}</span>
           {p.data_conclusao && <span style={{ color: 'var(--teal)' }}>✓ Concluída em {new Date(p.data_conclusao + 'T12:00:00').toLocaleDateString('pt-BR')}</span>}
         </div>
-      </div>
+      </Link>
     </div>
   )
 
@@ -307,7 +374,6 @@ export default function Pendencias({ obraId }) {
         <button className="btn btn-primary" onClick={() => setModal(true)}>+ Nova pendência</button>
       </div>
 
-      {/* Abas de obras */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
         {obras.map(o => (
           <button key={o.id} onClick={() => setObraSelecionada(o)}
@@ -317,7 +383,6 @@ export default function Pendencias({ obraId }) {
         ))}
       </div>
 
-      {/* Filtros e visualização */}
       {obraSelecionada && (
         <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
           <div style={{ display: 'flex', gap: 4, background: 'var(--gray-light)', borderRadius: 8, padding: 3 }}>
@@ -351,7 +416,6 @@ export default function Pendencias({ obraId }) {
         </div>
       )}
 
-      {/* Lista */}
       {!obraSelecionada ? (
         <div className="card"><div className="empty-state"><div style={{ fontSize: 28, marginBottom: 10 }}>🏗</div>Selecione uma obra.</div></div>
       ) : loading ? (
@@ -360,7 +424,7 @@ export default function Pendencias({ obraId }) {
         <div className="card">
           <div className="empty-state">
             <div style={{ fontSize: 28, marginBottom: 10 }}>✅</div>
-            Nenhuma pendência encontrada.{' '}
+            Nenhuma pendência.{' '}
             <span style={{ color: 'var(--orange)', cursor: 'pointer' }} onClick={() => setModal(true)}>Criar primeira</span>
           </div>
         </div>
@@ -374,10 +438,8 @@ export default function Pendencias({ obraId }) {
                   {items.filter(p => p.status !== 'concluida').length} pendente{items.filter(p => p.status !== 'concluida').length !== 1 ? 's' : ''} · {items.filter(p => p.status === 'concluida').length} concluída{items.filter(p => p.status === 'concluida').length !== 1 ? 's' : ''}
                 </span>
               </div>
-              <button onClick={() => handleGerarPDF(cat, items)}
-                disabled={gerandoPDF === cat}
-                className="btn btn-sm"
-                style={{ background: gerandoPDF === cat ? 'var(--muted)' : 'var(--teal)', color: '#fff', border: 'none' }}>
+              <button onClick={() => handleGerarPDF(cat, items)} disabled={gerandoPDF === cat}
+                className="btn btn-sm" style={{ background: gerandoPDF === cat ? 'var(--muted)' : 'var(--teal)', color: '#fff', border: 'none' }}>
                 {gerandoPDF === cat ? '⏳ Gerando...' : '⬇ Baixar PDF'}
               </button>
             </div>
@@ -387,18 +449,15 @@ export default function Pendencias({ obraId }) {
       ) : (
         Object.entries(porData).map(([dia, items]) => (
           <div key={dia} className="card" style={{ marginBottom: 14 }}>
-            <div style={{ padding: '14px 18px', borderBottom: '0.5px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div>
-                <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14, textTransform: 'capitalize' }}>{formatDia(dia)}</div>
-                <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>{items.length} pendência{items.length !== 1 ? 's' : ''}</div>
-              </div>
+            <div style={{ padding: '14px 18px', borderBottom: '0.5px solid var(--border)' }}>
+              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14, textTransform: 'capitalize' }}>{formatDia(dia)}</div>
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>{items.length} pendência{items.length !== 1 ? 's' : ''}</div>
             </div>
             {items.map(p => <PendenciaCard key={p.id} p={p} />)}
           </div>
         ))
       )}
 
-      {/* Modal nova pendência */}
       {modal && (
         <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setModal(false)}>
           <div className="modal">
